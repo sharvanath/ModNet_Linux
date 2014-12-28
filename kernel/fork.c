@@ -1310,6 +1310,9 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	p->sequential_io_avg	= 0;
 #endif
 
+	/* sharva_modnet: modnet fork */
+	fork_modnet(p);
+
 	/* Perform scheduler related setup. Assign this task to a CPU. */
 	sched_fork(clone_flags, p);
 

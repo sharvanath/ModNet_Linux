@@ -43,6 +43,39 @@
 #include <linux/compat.h>
 #include <linux/rculist.h>
 
+
+//sharva_modnet the virtual file per process for EPOLL_STEAL event
+static struct file virt_event_file;
+
+static unsigned int virtual_events_epoll(struct file *file, poll_table *wait) {
+
+	if(current->total_static_modules != -1)
+	{
+		printk(KERN_DEBUG "Error event added for a non-module\n");
+		return 0;
+	}
+
+	if(!poll_does_not_wait(wait)) {
+		poll_wait(file,current->pcore_infos_array[0][smp_processor_id()].virt_event_wq,wait);
+		smp_mb();
+	}
+
+	if(!list_empty(current->pcore_infos_array[0][smp_processor_id()].sock_list))
+	{
+		return POLLVNET;
+	}
+
+	return 0;
+}
+
+const struct file_operations virt_event_file_operations = {
+
+		.poll = virtual_events_epoll,
+
+};
+
+
+
 /*
  * LOCKING:
  * There are three level of locking required by epoll :
@@ -1235,7 +1268,12 @@ static int ep_create_wakeup_source(struct epitem *epi)
 			return -ENOMEM;
 	}
 
+	/*sharva_modnet: no need for path for virt */
+	if(epi->ffd.file->f_path.dentry!=0)
 	name = epi->ffd.file->f_path.dentry->d_name.name;
+	else
+		name = "__virtual_event_file";
+
 	ws = wakeup_source_register(name);
 
 	if (!ws)
@@ -1842,10 +1880,18 @@ SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
 		goto error_return;
 
 	/* Get the "struct file *" for the target file */
-	tf = fdget(fd);
-	if (!tf.file)
-		goto error_fput;
-
+	/* sharva_modnet: see if the fd is -1, which means virtual event */
+	if(fd==-1) {
+		/* just associate the event to the virtual file */
+		tf.file = &virt_event_file;
+		tf.need_put = 0; //don't fput virt file
+	}
+	else
+	{
+		tf = fdget(fd);
+		if (!tf.file)
+			goto error_fput;
+	}
 	/* The target file descriptor must support poll */
 	error = -EPERM;
 	if (!tf.file->f_op->poll)
@@ -2095,6 +2141,12 @@ COMPAT_SYSCALL_DEFINE6(epoll_pwait, int, epfd,
 static int __init eventpoll_init(void)
 {
 	struct sysinfo si;
+
+	/* sharva_modnet: added initialization code for virtual events */
+	virt_event_file.f_op = &virt_event_file_operations;
+	spin_lock_init(&virt_event_file.f_lock);
+	eventpoll_init_file(&virt_event_file);
+	virt_event_file.f_path.dentry = NULL;
 
 	si_meminfo(&si);
 	/*

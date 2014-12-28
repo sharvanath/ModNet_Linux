@@ -2905,8 +2905,9 @@ static inline bool tcp_ack_update_rtt(struct sock *sk, const int flag,
 	 */
 	if (seq_rtt < 0 && tp->rx_opt.saw_tstamp && tp->rx_opt.rcv_tsecr &&
 	    flag & FLAG_ACKED)
+	{
 		seq_rtt = tcp_time_stamp - tp->rx_opt.rcv_tsecr;
-
+	}
 	if (seq_rtt < 0)
 		return false;
 
@@ -3437,6 +3438,15 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 
 		tcp_ca_event(sk, CA_EVENT_SLOW_ACK);
 	}
+
+	//sharva_modnet
+	if(tp->stats){
+		tp->stats->last_size = tp->stats->curr_size;
+		tp->stats->curr_size = ack - prior_snd_una;
+	}
+	update_sequence_n_rtt(sk);
+	update_bandwidth(sk);
+	update_state_page(sk);
 
 	/* We passed data and got it acked, remove any soft error
 	 * log. Something worked...

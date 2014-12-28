@@ -106,6 +106,9 @@
 #include <linux/atalk.h>
 #include <net/busy_poll.h>
 
+// sharva_modnet
+#include <linux/modnet.h>
+
 #ifdef CONFIG_NET_RX_BUSY_POLL
 unsigned int sysctl_net_busy_read __read_mostly;
 unsigned int sysctl_net_busy_poll __read_mostly;
@@ -448,7 +451,7 @@ struct socket *sockfd_lookup(int fd, int *err)
 }
 EXPORT_SYMBOL(sockfd_lookup);
 
-static struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
+struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
 {
 	struct file *file;
 	struct socket *sock;
@@ -463,6 +466,8 @@ static struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
 	}
 	return NULL;
 }
+EXPORT_SYMBOL(sockfd_lookup_light);
+
 
 #define XATTR_SOCKPROTONAME_SUFFIX "sockprotoname"
 #define XATTR_NAME_SOCKPROTONAME (XATTR_SYSTEM_PREFIX XATTR_SOCKPROTONAME_SUFFIX)
@@ -534,7 +539,7 @@ static const struct inode_operations sockfs_inode_ops = {
  *	NULL is returned.
  */
 
-static struct socket *sock_alloc(void)
+struct socket *sock_alloc(void)
 {
 	struct inode *inode;
 	struct socket *sock;
@@ -544,6 +549,9 @@ static struct socket *sock_alloc(void)
 		return NULL;
 
 	sock = SOCKET_I(inode);
+
+	// sharva_modnet
+	sock->final_sock = NULL;
 
 	kmemcheck_annotate_bitfield(sock, type);
 	inode->i_ino = get_next_ino();
@@ -555,7 +563,7 @@ static struct socket *sock_alloc(void)
 	this_cpu_add(sockets_in_use, 1);
 	return sock;
 }
-
+EXPORT_SYMBOL(sock_alloc);
 /*
  *	In theory you can't get an open on this inode, but /proc provides
  *	a back door. Remember to keep it shut otherwise you'll let the
@@ -584,6 +592,21 @@ const struct file_operations bad_sock_fops = {
 
 void sock_release(struct socket *sock)
 {
+
+	if(sock->final_sock && sock->final_sock->last_sock != sock)
+	{
+		struct files_struct *files = current->files;
+		// sharva_modnet: since we have already incremented
+		// the ref count while enqueueing sockets this should
+		// take care of freeing at the end
+		filp_close(sock->final_sock->last_sock->file,files);
+	}
+
+	if(sock->final_sock && sock->final_sock->last_sock == sock)
+	{
+		kfree(sock->final_sock);
+	}
+
 	if (sock->ops) {
 		struct module *owner = sock->ops->owner;
 
@@ -635,7 +658,12 @@ static inline int __sock_sendmsg_nosec(struct kiocb *iocb, struct socket *sock,
 static inline int __sock_sendmsg(struct kiocb *iocb, struct socket *sock,
 				 struct msghdr *msg, size_t size)
 {
-	int err = security_socket_sendmsg(sock, msg, size);
+	int err;
+	// sharva_modnet
+	if(sock->final_sock)
+		return __sock_sendmsg_nosec(iocb, sock, msg, size);
+
+	err = security_socket_sendmsg(sock, msg, size);
 
 	return err ?: __sock_sendmsg_nosec(iocb, sock, msg, size);
 }
@@ -786,7 +814,16 @@ static inline int __sock_recvmsg_nosec(struct kiocb *iocb, struct socket *sock,
 static inline int __sock_recvmsg(struct kiocb *iocb, struct socket *sock,
 				 struct msghdr *msg, size_t size, int flags)
 {
-	int err = security_socket_recvmsg(sock, msg, size, flags);
+	int err;
+
+	// sharva_modnet
+	if(sock->final_sock && sock->final_sock->last_sock != sock)
+	{
+		err =  __sock_recvmsg_nosec(iocb, sock, msg, size, flags);
+		return err;
+	}
+
+	err = security_socket_recvmsg(sock, msg, size, flags);
 
 	return err ?: __sock_recvmsg_nosec(iocb, sock, msg, size, flags);
 }
@@ -1320,6 +1357,13 @@ int __sock_create(struct net *net, int family, int type, int protocol,
 	if (err < 0)
 		goto out_module_put;
 
+	// sharva_modnet
+	sock->sk->yank_check = 0;
+	sock->sk->yank_active = 0;
+	sock->sk->yank_usage = -1;
+	sock->sk->yank_data = NULL;
+	sock->sk->yank_datalen = 0;
+
 	/*
 	 * Now to bump the refcnt of the [loadable] module that owns this
 	 * socket at sock_release time we decrement its refcnt.
@@ -1394,6 +1438,14 @@ SYSCALL_DEFINE3(socket, int, family, int, type, int, protocol)
 	if (retval < 0)
 		goto out_release;
 
+	// sharva_modnet: okay, adding the socket to pending list and waking any epoll_waits now
+	/*	if( (family==PF_INET || family==PF_INET6 || family==AF_INET || family==AF_INET6))// && sock->type==SOCK_STREAM )
+	{
+#ifdef VSOCK_DEBUG
+		if(current->module[0]!=1)
+#endif
+			enqueue_sock(retval,sock->file);
+	}*/
 out:
 	/* It may be already another descriptor 8) Not kernel problem. */
 	return retval;
@@ -1508,9 +1560,23 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int err, fput_needed;
+	struct file * to_put;
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock) {
+		to_put = sock->file;
+		// sharva_modnet
+		if(sock->final_sock)
+		{
+			if(sock->final_sock->last_sock) {
+				if(sock->final_sock->closed)
+				{
+					err = EADDRINUSE;
+					goto out_put;
+				}
+				sock = sock->final_sock->last_sock;
+			}
+		}
 		err = move_addr_to_kernel(umyaddr, addrlen, &address);
 		if (err >= 0) {
 			err = security_socket_bind(sock,
@@ -1521,7 +1587,9 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 						      (struct sockaddr *)
 						      &address, addrlen);
 		}
-		fput_light(sock->file, fput_needed);
+
+		out_put:
+		fput_light(to_put, fput_needed);
 	}
 	return err;
 }
@@ -1537,9 +1605,27 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 	struct socket *sock;
 	int err, fput_needed;
 	int somaxconn;
+	struct file * to_put;
+
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock) {
+		to_put = sock->file;
+
+		// sharva_modnet
+		if(sock->final_sock)
+		{
+			if(sock->final_sock->last_sock) {
+				if(sock->final_sock->closed)
+				{
+					err = EADDRINUSE;
+					goto out_put;
+				}
+				sock = sock->final_sock->last_sock;
+			}
+		}
+
+
 		somaxconn = sock_net(sock->sk)->core.sysctl_somaxconn;
 		if ((unsigned int)backlog > somaxconn)
 			backlog = somaxconn;
@@ -1548,7 +1634,8 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 		if (!err)
 			err = sock->ops->listen(sock, backlog);
 
-		fput_light(sock->file, fput_needed);
+		out_put:
+		fput_light(to_put, fput_needed);
 	}
 	return err;
 }
@@ -1564,7 +1651,6 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
  *	status to recvmsg. We need to add that support in a way thats
  *	clean when we restucture accept also.
  */
-
 SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 		int __user *, upeer_addrlen, int, flags)
 {
@@ -1572,6 +1658,7 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	struct file *newfile;
 	int err, len, newfd, fput_needed;
 	struct sockaddr_storage address;
+	struct file * to_put;
 
 	if (flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK))
 		return -EINVAL;
@@ -1582,6 +1669,13 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (!sock)
 		goto out;
+
+	// sharva_modnet
+	to_put = sock->file;
+	if(sock->final_sock && sock->final_sock->last_sock)
+	{
+		sock = sock->final_sock->last_sock;
+	}
 
 	err = -ENFILE;
 	newsock = sock_alloc();
@@ -1636,8 +1730,20 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	fd_install(newfd, newfile);
 	err = newfd;
 
+	// sharva_modnet
+	newsock->sk->yank_check = 0;
+	newsock->sk->yank_active = 0;
+	newsock->sk->yank_usage = 0;
+	newsock->sk->yank_data = NULL;
+	newsock->sk->yank_datalen = 0;
+	if(sock->ops->family==PF_INET || sock->ops->family==PF_INET6 || sock->ops->family==AF_INET || sock->ops->family==AF_INET6)
+	{
+		enqueue_sock(newfd,newfile);
+	}
+
+
 out_put:
-	fput_light(sock->file, fput_needed);
+	fput_light(to_put, fput_needed);
 out:
 	return err;
 out_fd:
@@ -1670,10 +1776,23 @@ SYSCALL_DEFINE3(connect, int, fd, struct sockaddr __user *, uservaddr,
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int err, fput_needed;
+	struct file * to_put;
+
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (!sock)
 		goto out;
+
+	to_put = sock->file;
+
+	if(sock->final_sock && sock->final_sock->last_sock)
+	{
+		// sharva_modnet:
+		// will not be closed until they are done
+		sock = sock->final_sock->last_sock;
+	}
+
+
 	err = move_addr_to_kernel(uservaddr, addrlen, &address);
 	if (err < 0)
 		goto out_put;
@@ -1685,8 +1804,9 @@ SYSCALL_DEFINE3(connect, int, fd, struct sockaddr __user *, uservaddr,
 
 	err = sock->ops->connect(sock, (struct sockaddr *)&address, addrlen,
 				 sock->file->f_flags);
+
 out_put:
-	fput_light(sock->file, fput_needed);
+	fput_light(to_put, fput_needed);
 out:
 	return err;
 }
@@ -1695,17 +1815,25 @@ out:
  *	Get the local address ('name') of a socket object. Move the obtained
  *	name to user space.
  */
-
 SYSCALL_DEFINE3(getsockname, int, fd, struct sockaddr __user *, usockaddr,
 		int __user *, usockaddr_len)
 {
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int len, err, fput_needed;
+	struct file * to_put;
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (!sock)
 		goto out;
+
+	// sharva_modnet
+	to_put = sock->file;
+	if(sock->final_sock && sock->final_sock->last_sock)
+	{
+		sock = sock->final_sock->last_sock;
+	}
+
 
 	err = security_socket_getsockname(sock);
 	if (err)
@@ -1717,7 +1845,7 @@ SYSCALL_DEFINE3(getsockname, int, fd, struct sockaddr __user *, usockaddr,
 	err = move_addr_to_user(&address, len, usockaddr, usockaddr_len);
 
 out_put:
-	fput_light(sock->file, fput_needed);
+	fput_light(to_put, fput_needed);
 out:
 	return err;
 }
@@ -1726,19 +1854,29 @@ out:
  *	Get the remote address ('name') of a socket object. Move the obtained
  *	name to user space.
  */
-
 SYSCALL_DEFINE3(getpeername, int, fd, struct sockaddr __user *, usockaddr,
 		int __user *, usockaddr_len)
 {
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int len, err, fput_needed;
+	struct file * to_put;
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock != NULL) {
+
+		// sharva_modnet
+		to_put = sock->file;
+		if(sock->final_sock && sock->final_sock->last_sock)
+		{
+
+			sock = sock->final_sock->last_sock;
+
+		}
+
 		err = security_socket_getpeername(sock);
 		if (err) {
-			fput_light(sock->file, fput_needed);
+			fput_light(to_put, fput_needed);
 			return err;
 		}
 
@@ -1748,7 +1886,7 @@ SYSCALL_DEFINE3(getpeername, int, fd, struct sockaddr __user *, usockaddr,
 		if (!err)
 			err = move_addr_to_user(&address, len, usockaddr,
 						usockaddr_len);
-		fput_light(sock->file, fput_needed);
+		fput_light(to_put, fput_needed);
 	}
 	return err;
 }
@@ -1875,18 +2013,27 @@ asmlinkage long sys_recv(int fd, void __user *ubuf, size_t size,
  *	Set a socket option. Because we don't know the option lengths we have
  *	to pass the user mode parameter for the protocols to sort out.
  */
-
 SYSCALL_DEFINE5(setsockopt, int, fd, int, level, int, optname,
 		char __user *, optval, int, optlen)
 {
 	int err, fput_needed;
 	struct socket *sock;
+	struct file * to_put;
 
 	if (optlen < 0)
 		return -EINVAL;
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock != NULL) {
+
+		to_put = sock->file;
+		if(sock->final_sock && sock->final_sock->last_sock)
+		{
+
+			sock = sock->final_sock->last_sock;
+
+		}
+
 		err = security_socket_setsockopt(sock, level, optname);
 		if (err)
 			goto out_put;
@@ -1900,7 +2047,7 @@ SYSCALL_DEFINE5(setsockopt, int, fd, int, level, int, optname,
 			    sock->ops->setsockopt(sock, level, optname, optval,
 						  optlen);
 out_put:
-		fput_light(sock->file, fput_needed);
+		fput_light(to_put, fput_needed);
 	}
 	return err;
 }
@@ -1915,9 +2062,17 @@ SYSCALL_DEFINE5(getsockopt, int, fd, int, level, int, optname,
 {
 	int err, fput_needed;
 	struct socket *sock;
+	struct file * to_put;
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock != NULL) {
+
+		// sharva_modnet
+		to_put = sock->file;
+		if(sock->final_sock && sock->final_sock->last_sock)
+		{
+			sock = sock->final_sock->last_sock;
+		}
 		err = security_socket_getsockopt(sock, level, optname);
 		if (err)
 			goto out_put;
@@ -1931,7 +2086,7 @@ SYSCALL_DEFINE5(getsockopt, int, fd, int, level, int, optname,
 			    sock->ops->getsockopt(sock, level, optname, optval,
 						  optlen);
 out_put:
-		fput_light(sock->file, fput_needed);
+		fput_light(to_put, fput_needed);
 	}
 	return err;
 }
@@ -1947,9 +2102,21 @@ SYSCALL_DEFINE2(shutdown, int, fd, int, how)
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock != NULL) {
+
+		// sharva_modnet: circumvent the security part
+		if(sock->final_sock)
+		{
+			if(!sock->ops)
+				printk("modnet: Failed in shutdown %lu %lu\n",
+                                      (unsigned long)sock,(unsigned long)sock->ops);
+			err = sock->ops->shutdown(sock, how);
+		}
+		else
+		{
 		err = security_socket_shutdown(sock, how);
 		if (!err)
 			err = sock->ops->shutdown(sock, how);
+		}
 		fput_light(sock->file, fput_needed);
 	}
 	return err;

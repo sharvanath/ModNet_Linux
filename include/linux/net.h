@@ -116,6 +116,11 @@ struct socket {
 	struct file		*file;
 	struct sock		*sk;
 	const struct proto_ops	*ops;
+	//sharva_modnet: the last sockets status
+	struct last_sock_status * final_sock;
+	//sharva_modnet: the previous module/application
+	struct task_struct * prev_module;
+	atomic_long_t final_squash;
 };
 
 struct vm_area_struct;

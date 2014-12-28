@@ -330,6 +330,8 @@ int rw_verify_area(int read_write, struct file *file, const loff_t *ppos, size_t
 	struct inode *inode;
 	loff_t pos;
 	int retval = -EINVAL;
+        struct socket * sock;
+        int err_t = 0;
 
 	inode = file_inode(file);
 	if (unlikely((ssize_t) count < 0))
@@ -352,8 +354,16 @@ int rw_verify_area(int read_write, struct file *file, const loff_t *ppos, size_t
 		if (retval < 0)
 			return retval;
 	}
+
+	sock = sock_from_file(file, &err_t);
+	// sharva_modnet: bypassing security for module sockets.
+	// TODO(sharva) are there any real implications of this??
+	if(err_t >= 0 && sock->final_sock)
+		retval = 0;
+	else
 	retval = security_file_permission(file,
 				read_write == READ ? MAY_READ : MAY_WRITE);
+
 	if (retval)
 		return retval;
 	return count > MAX_RW_COUNT ? MAX_RW_COUNT : count;

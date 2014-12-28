@@ -778,7 +778,8 @@ void do_exit(long code)
 	if (group_dead)
 		acct_process();
 	trace_sched_process_exit(tsk);
-
+	//sharva_modnet
+	exit_modnet(tsk);
 	exit_sem(tsk);
 	exit_shm(tsk);
 	exit_files(tsk);

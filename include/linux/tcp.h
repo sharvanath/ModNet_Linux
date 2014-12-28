@@ -320,6 +320,9 @@ struct tcp_sock {
 	 * socket. Used to retransmit SYNACKs etc.
 	 */
 	struct request_sock *fastopen_rsk;
+	/* sharva_modnet : pointer to the shared memory that contains
+         * the socket state variables*/
+	struct tcp_sock_stats * stats;
 };
 
 enum tsq_flags {

@@ -325,6 +325,9 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err)
 	req = reqsk_queue_remove(queue);
 	newsk = req->sk;
 
+	//sharva_modnet
+	init_stat_page(newsk);
+
 	sk_acceptq_removed(sk);
 	if (sk->sk_protocol == IPPROTO_TCP && queue->fastopenq != NULL) {
 		spin_lock_bh(&queue->fastopenq->lock);

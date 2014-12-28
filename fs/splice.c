@@ -1135,6 +1135,7 @@ static long do_splice_to(struct file *in, loff_t *ppos,
 	ssize_t (*splice_read)(struct file *, loff_t *,
 			       struct pipe_inode_info *, size_t, unsigned int);
 	int ret;
+	long returned;
 
 	if (unlikely(!(in->f_mode & FMODE_READ)))
 		return -EBADF;
@@ -1148,7 +1149,8 @@ static long do_splice_to(struct file *in, loff_t *ppos,
 	else
 		splice_read = default_file_splice_read;
 
-	return splice_read(in, ppos, pipe, len, flags);
+	returned =  splice_read(in, ppos, pipe, len, flags);
+	return returned;
 }
 
 /**
@@ -1359,7 +1361,9 @@ static long do_splice(struct file *in, loff_t __user *off_in,
 
 		/* Splicing to self would be fun, but... */
 		if (ipipe == opipe)
+		{
 			return -EINVAL;
+		}
 
 		return splice_pipe_to_pipe(ipipe, opipe, len, flags);
 	}
@@ -1369,7 +1373,9 @@ static long do_splice(struct file *in, loff_t __user *off_in,
 			return -ESPIPE;
 		if (off_out) {
 			if (!(out->f_mode & FMODE_PWRITE))
+			{
 				return -EINVAL;
+			}
 			if (copy_from_user(&offset, off_out, sizeof(loff_t)))
 				return -EFAULT;
 		} else {
@@ -1380,7 +1386,9 @@ static long do_splice(struct file *in, loff_t __user *off_in,
 			return -EBADF;
 
 		if (unlikely(out->f_flags & O_APPEND))
+		{
 			return -EINVAL;
+		}
 
 		ret = rw_verify_area(WRITE, out, &offset, len);
 		if (unlikely(ret < 0))
@@ -1403,7 +1411,9 @@ static long do_splice(struct file *in, loff_t __user *off_in,
 			return -ESPIPE;
 		if (off_in) {
 			if (!(in->f_mode & FMODE_PREAD))
+			{
 				return -EINVAL;
+			}
 			if (copy_from_user(&offset, off_in, sizeof(loff_t)))
 				return -EFAULT;
 		} else {

@@ -4233,6 +4233,9 @@ static int selinux_socket_unix_may_send(struct socket *sock,
 	struct common_audit_data ad;
 	struct lsm_network_audit net = {0,};
 
+	//sharva_modnet
+	if(sock->final_sock || other->final_sock)
+		return 0;
 	ad.type = LSM_AUDIT_DATA_NET;
 	ad.u.net = &net;
 	ad.u.net->sk = other->sk;

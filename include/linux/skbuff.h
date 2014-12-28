@@ -421,6 +421,12 @@ struct sk_buff {
 	 * want to keep them across layers you have to do a skb_clone()
 	 * first. This is owned by whoever has the skb queued ATM.
 	 */
+	// sharva_modnet
+	// the isock_addr is used to keep track of the sender of this sk_buff,
+	// in order to masquerade in the send_isock call
+	void * 	isock_addr;
+	unsigned int isock_addrlen;
+
 	char			cb[48] __aligned(8);
 
 	unsigned long		_skb_refdst;

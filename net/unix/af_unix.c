@@ -185,6 +185,12 @@ static inline int unix_recvq_full(struct sock const *sk)
 	return skb_queue_len(&sk->sk_receive_queue) > sk->sk_max_ack_backlog;
 }
 
+//sharva_modnet: moved this up
+static unsigned int unix_skb_len(const struct sk_buff *skb)
+{
+	return skb->len - UNIXCB(skb).consumed;
+}
+
 struct sock *unix_peer_get(struct sock *s)
 {
 	struct sock *peer;
@@ -543,6 +549,11 @@ static int unix_set_peek_off(struct sock *sk, int val)
 	return 0;
 }
 
+// Intermediate socket code.
+// Todo(sharva) Fix this!!!!!
+// Unfortunately since it's tighly coupled with
+// many static functions we have this ungly hack
+#include "../modnet/modnet_isock.c"
 
 static const struct proto_ops unix_stream_ops = {
 	.family =	PF_UNIX,
@@ -561,7 +572,8 @@ static const struct proto_ops unix_stream_ops = {
 	.getsockopt =	sock_no_getsockopt,
 	.sendmsg =	unix_stream_sendmsg,
 	.recvmsg =	unix_stream_recvmsg,
-	.mmap =		sock_no_mmap,
+		//.mmap =		sock_no_mmap,
+		.mmap = cstack_mmap1,
 	.sendpage =	sock_no_sendpage,
 	.set_peek_off =	unix_set_peek_off,
 };
@@ -583,7 +595,8 @@ static const struct proto_ops unix_dgram_ops = {
 	.getsockopt =	sock_no_getsockopt,
 	.sendmsg =	unix_dgram_sendmsg,
 	.recvmsg =	unix_dgram_recvmsg,
-	.mmap =		sock_no_mmap,
+		//.mmap =		sock_no_mmap,
+		.mmap = cstack_mmap1,
 	.sendpage =	sock_no_sendpage,
 	.set_peek_off =	unix_set_peek_off,
 };
@@ -661,6 +674,11 @@ out:
 		sock_prot_inuse_add(sock_net(sk), sk->sk_prot, 1);
 		local_bh_enable();
 	}
+
+	//sharva_modnet
+	if(sk != NULL)
+		sk->stat_ptr = NULL;
+
 	return sk;
 }
 
@@ -1459,6 +1477,9 @@ static int unix_dgram_sendmsg(struct kiocb *kiocb, struct socket *sock,
 	int max_level;
 	int data_len = 0;
 
+	//sharva_mod
+	int isock_forge = isock_forge_check(msg);
+
 	if (NULL == siocb->scm)
 		siocb->scm = &tmp_scm;
 	wait_for_unix_gc();
@@ -1501,6 +1522,11 @@ static int unix_dgram_sendmsg(struct kiocb *kiocb, struct socket *sock,
 				   PAGE_ALLOC_COSTLY_ORDER);
 	if (skb == NULL)
 		goto out;
+
+	//sharva_modnet setting the real source of this message
+	if(isock_forge){
+		isock_do_forge(msg,skb);
+	}
 
 	err = unix_scm_to_skb(siocb->scm, skb, true);
 	if (err < 0)
@@ -1807,8 +1833,12 @@ static int unix_dgram_recvmsg(struct kiocb *iocb, struct socket *sock,
 	wake_up_interruptible_sync_poll(&u->peer_wait,
 					POLLOUT | POLLWRNORM | POLLWRBAND);
 
-	if (msg->msg_name)
+	// sharva_modnet: here we are exposing
+	// who sent the packet which is violating fidelity
+	if(!copy_forge_addr(sock,msg,skb));
+	else if (msg->msg_name)
 		unix_copy_addr(msg, skb->sk);
+
 
 	if (size > skb->len - skip)
 		size = skb->len - skip;
@@ -1895,11 +1925,6 @@ static long unix_stream_data_wait(struct sock *sk, long timeo,
 	finish_wait(sk_sleep(sk), &wait);
 	unix_state_unlock(sk);
 	return timeo;
-}
-
-static unsigned int unix_skb_len(const struct sk_buff *skb)
-{
-	return skb->len - UNIXCB(skb).consumed;
 }
 
 static int unix_stream_recvmsg(struct kiocb *iocb, struct socket *sock,
@@ -2154,8 +2179,10 @@ static int unix_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		else
 			err = put_user(amount, (int __user *)arg);
 		break;
+
 	default:
-		err = -ENOIOCTLCMD;
+		//sharva_modnet
+		err = intermediate_ioctl(sock,cmd,arg);
 		break;
 	}
 	return err;

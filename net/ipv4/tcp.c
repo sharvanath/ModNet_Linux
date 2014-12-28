@@ -417,6 +417,9 @@ void tcp_init_sock(struct sock *sk)
 	sk->sk_sndbuf = sysctl_tcp_wmem[1];
 	sk->sk_rcvbuf = sysctl_tcp_rmem[1];
 
+	//sharva_modnet
+	init_stat_page(sk);
+
 	local_bh_disable();
 	sock_update_memcg(sk);
 	sk_sockets_allocated_inc(sk);
@@ -535,6 +538,16 @@ int tcp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 	bool slow;
 
 	switch (cmd) {
+	//sharva_modnet
+	case SIOVNETPAIR:
+		return -1;
+	case SIOVNETCHECKAVAILABLE:
+		sk->yank_active = 1;
+		answ = tcp_sk(sk)->write_seq-tcp_sk(sk)->snd_nxt;
+		return answ;
+	case SIOVNETYANKCLEAR:
+		sk->yank_active = 0;
+		return 0;
 	case SIOCINQ:
 		if (sk->sk_state == TCP_LISTEN)
 			return -EINVAL;
@@ -631,6 +644,9 @@ static inline void tcp_push(struct sock *sk, int flags, int mss_now,
 		tcp_mark_urg(tp, flags);
 		__tcp_push_pending_frames(sk, mss_now,
 					  (flags & MSG_MORE) ? TCP_NAGLE_CORK : nonagle);
+
+		//sharva_modnet
+		update_state_page(sk);
 	}
 }
 
@@ -2166,9 +2182,11 @@ adjudge_to_death:
 	sock_hold(sk);
 	sock_orphan(sk);
 
+	//sharva_modnet
+	free_state_page(sk);
+
 	/* It is the last release_sock in its life. It will remove backlog. */
 	release_sock(sk);
-
 
 	/* Now socket is owned by kernel and we acquire BH lock
 	   to finish close. No need to check for user refs.
@@ -3057,6 +3075,11 @@ EXPORT_SYMBOL(tcp_md5_hash_key);
 void tcp_done(struct sock *sk)
 {
 	struct request_sock *req = tcp_sk(sk)->fastopen_rsk;
+
+	//sharva_modnet
+	if(tcp_sk(sk)->stats){
+		tcp_sk(sk)->stats->snd_una = tcp_sk(sk)->stats->write_seq;
+	}
 
 	if (sk->sk_state == TCP_SYN_SENT || sk->sk_state == TCP_SYN_RECV)
 		TCP_INC_STATS_BH(sock_net(sk), TCP_MIB_ATTEMPTFAILS);

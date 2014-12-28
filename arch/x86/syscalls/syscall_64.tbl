@@ -321,6 +321,20 @@
 312	common	kcmp			sys_kcmp
 313	common	finit_module		sys_finit_module
 
+# ModNet syscalls
+400 	common  modnet_getsockets       sys_modnet_getsockets
+401     common  modnet_register       	sys_modnet_register
+402     common  modnet_apply          	sys_modnet_apply
+403     common  modnet_isock_send       sys_modnet_isock_send
+404     common  modnet_isock_yank       sys_modnet_isock_yank
+405     common  modnet_map_last_sock  	sys_modnet_map_last_sock
+406     common  modnet_yank           	sys_modnet_yank
+407     common  modnet_yankputdata    	sys_modnet_yankputdata
+408     common  modnet_yankdata       	sys_modnet_yankdata
+409     common  modnet_interception   	sys_modnet_interception
+410     common  modnet_module_end     	sys_modnet_module_end
+411     common  modnet_yield 	 	    sys_modnet_yield
+
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
 # for native 64-bit operation.

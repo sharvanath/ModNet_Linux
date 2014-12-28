@@ -72,3 +72,10 @@ obj-$(CONFIG_OPENVSWITCH)	+= openvswitch/
 obj-$(CONFIG_VSOCKETS)	+= vmw_vsock/
 obj-$(CONFIG_NET_MPLS_GSO)	+= mpls/
 obj-$(CONFIG_HSR)		+= hsr/
+
+##sharva_modnet
+obj-$(CONFIG_NET)               += modnet/modnet.o
+obj-$(CONFIG_NET)               += modnet/modnet_utils.o
+obj-$(CONFIG_NET)               += modnet/modnet_sock.o
+obj-$(CONFIG_NET)               += modnet/modnet_yank.o
+obj-$(CONFIG_NET)               += modnet/modnet_shmem.o

@@ -424,6 +424,18 @@ struct sock {
 	int			(*sk_backlog_rcv)(struct sock *sk,
 						  struct sk_buff *skb);
 	void                    (*sk_destruct)(struct sock *sk);
+
+	// sharva_modnet, these are used for yank.
+	// stat_page should be copied from tcp_sock shared state page
+	struct page * stat_page;
+	void * stat_ptr;
+	int yank_check;
+        // used to indicate that yank procedure has begun on this sock.
+	int yank_active;
+	int yank_usage;
+	unsigned char * yank_data;
+	int yank_datalen;
+	int is_mapped;
 };
 
 #define __sk_user_data(sk) ((*((void __rcu **)&(sk)->sk_user_data)))

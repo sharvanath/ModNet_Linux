@@ -2,7 +2,8 @@
 #define _LINUX_SCHED_H
 
 #include <uapi/linux/sched.h>
-
+/* sharva_modnet: the header for the modnet */
+#include <linux/modnet.h>
 
 struct sched_param {
 	int sched_priority;
@@ -1454,6 +1455,14 @@ struct task_struct {
 	unsigned int	sequential_io;
 	unsigned int	sequential_io_avg;
 #endif
+	// sharva_modnet: field for testing pruposes
+	struct list_head * module_task;
+	// sharva_modnet: field only used for modules
+	struct modules_table_entry * module_entry;
+        // sharva_modnet: this should actually be an array of modules,
+        // and for each module we have an array of size no. of cores.
+	struct per_core_module_info * pcore_infos_array[MODNET_MAX_MODULES];
+	int total_static_modules;
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
