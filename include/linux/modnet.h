@@ -16,7 +16,8 @@
 // #define VSOCK_DEBUG_PRINT_ALL
 
 #ifdef NUM_MOD_QUEUES
-printk(KERN_DEBUG "modnet: fatal error NUM_MOD_QUEUES is already taken by some other kernel component\n");
+printk(KERN_DEBUG "modnet: fatal error NUM_MOD_QUEUES is already "
+		"taken by some other kernel component\n");
 #endif
 
 #define NUM_MOD_QUEUES NR_CPUS
@@ -25,17 +26,25 @@ printk(KERN_DEBUG "modnet: fatal error NUM_MOD_QUEUES is already taken by some o
 struct socket;
 
 struct per_core_module_info {
-	struct list_head * sock_list; //for module: the list of stolen socket, for appl: pointer to modules list of stolen socket.
-	spinlock_t * mod_lock; //for module: the lock for list of stolen socket, for appl: pointer to lock for modules list of stolen socket.
-	wait_queue_head_t * virt_event_wq; //for module: the pointer to blocled process (i.e. module) this is a list to be compatible with the existing epoll code. for applications: pointer, that is used to wake up module.
-	atomic_t * interception_on; //not a readily used feature.
+	// for module: the list of stolen socket, 
+	// for appl: pointer to modules list of stolen socket.
+	struct list_head * sock_list;
+	// for module: the lock for list of stolen socket
+	// for appl: pointer to lock for modules list of stolen socket.
+	spinlock_t * mod_lock;
+	// for module: the pointer to blocled process (i.e. module) this is a 
+	// list to be compatible with the existing epoll code. 
+	// for applications: pointer, that is used to wake up module.
+	wait_queue_head_t * virt_event_wq;
+	// For module tells whether the socket stealing should be performed or not.
+	// Not a readily used feature. 
+	atomic_t * interception_on;
 };
 
 struct modules_table_entry {
 	struct list_head list;
 	char * identifier;
 	atomic_long_t ref_cnt;
-	struct task_struct * module_task;
 	struct per_core_module_info pcore_infos[NUM_MOD_QUEUES];
 	//may be add the level/order in the chain
 };
@@ -48,13 +57,15 @@ struct tcp_sock_stats {
 	u32 srtt;
 	u32 snd_wnd;
 
-	unsigned int last_rtt;	//not good for estimating very high speeds, since the accuracy is usec
+	// not good for estimating very high speeds, since the accuracy is usec
+	unsigned int last_rtt;	
 	unsigned int last_start_timestamp;
 	unsigned int curr_rtt;
 	unsigned int curr_start_timestamp;
 	u32 last_size;
 	u32 curr_size;
-	u32 estimated_bandwidth; //kernel does this for you
+	// kernel does this for you, application can also do this themselves.
+	u32 estimated_bandwidth; 
 };
 
 struct isock_elem {
@@ -64,12 +75,11 @@ struct isock_elem {
 };
 
 struct last_sock_status {
-
 	struct socket * last_sock;
 	struct page * stat_page;
+	// Todo(sharva) check if there are alignment problems with short
 	short closed;
 	int ref_cnt;
-	//check if there are alignment problems with short
 };
 
 /* sharva_mod3 */
@@ -96,5 +106,8 @@ int is_curr_application(void);
 int is_curr_module_or_app(void);
 
 int modnet_module_exists(struct per_core_module_info * pcore_module_infos);
-int get_pcore_infos_array(char __user ** indentifier, int num_mods, struct per_core_module_info * pcore_info[]);
+int get_pcore_infos_array(char __user ** indentifier, 
+		int num_mods, 
+		struct per_core_module_info * pcore_info[]);
+
 #endif

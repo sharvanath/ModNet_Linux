@@ -1455,12 +1455,10 @@ struct task_struct {
 	unsigned int	sequential_io;
 	unsigned int	sequential_io_avg;
 #endif
-	// sharva_modnet: field for testing pruposes
-	struct list_head * module_task;
 	// sharva_modnet: field only used for modules
 	struct modules_table_entry * module_entry;
-        // sharva_modnet: this should actually be an array of modules,
-        // and for each module we have an array of size no. of cores.
+    // sharva_modnet: this should actually be an array of modules,
+    // and for each module we have an array of size no. of cores.
 	struct per_core_module_info * pcore_infos_array[MODNET_MAX_MODULES];
 	int total_static_modules;
 };

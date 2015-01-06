@@ -1,12 +1,13 @@
 /* ModNet's module management functionalities
  * Author: Sharvanath Pathak */
-#include <linux/sched.h>
-#include <linux/mm.h>
-#include <linux/slab.h>
-#include <linux/linkage.h>
-#include <linux/rculist.h>
-#include <linux/syscalls.h>
 #include <asm/unistd.h>
+#include <linux/linkage.h>
+#include <linux/mm.h>
+#include <linux/pid.h>
+#include <linux/rculist.h>
+#include <linux/sched.h>
+#include <linux/slab.h>
+#include <linux/syscalls.h>
 #include <linux/modnet.h>
 #include <linux/tcp.h>
 #include <linux/poll.h>
@@ -22,21 +23,15 @@ struct isock_elem isock_elem_head;
 
 /* The functions for maintaining global modules.
  * Returns the array of per_core_module_info for the given module. */
-struct per_core_module_info * find_modnet_module(char __user * identifier, int is_add){
-
+struct per_core_module_info * find_modnet_module(char __user * identifier, 
+		int is_add){
 	char * curr_identifier;
 	struct modules_table_entry * curr_entry;
-
 	rcu_read_lock();
 	list_for_each_entry_rcu(curr_entry, &modules_table.list, list) {
 		curr_identifier = curr_entry->identifier;
 		if(!strcmp(identifier,curr_identifier))
 		{
-			if(is_add==1){
-				//this field is for testing purpose only, and can be casted and used
-				current->module_task = (struct list_head *)curr_entry->module_task;
-			}
-
 			rcu_read_unlock();
 			return curr_entry->pcore_infos;
 		}
@@ -59,15 +54,16 @@ int add_modnet_module (char __user * identifier){
 	if(find_modnet_module(identifier,0))
 		return -1;
 
-	ptr = kmalloc((strnlen_user(identifier,MAXIMUM_MODNAME)+1)*sizeof(char),GFP_KERNEL);
-	//Todo(sharva) handle error if memory is not allocatable!!!!
-	err = strncpy_from_user(ptr,identifier,MAXIMUM_MODNAME);
+	ptr = kmalloc((strnlen_user(identifier, MAXIMUM_MODNAME) + 1),
+			GFP_KERNEL);
+	
+	//Todo(sharva) handle error if memory is not allocatable
+	err = strncpy_from_user(ptr, identifier, MAXIMUM_MODNAME);
 	if(err<0)
 		goto out;
-
+	
 	curr_module = kmalloc(sizeof(struct modules_table_entry),GFP_KERNEL);
 	curr_module -> identifier  = ptr;
-	curr_module -> module_task = current;
 	atomic_long_set(&(curr_module -> ref_cnt),1);
 
 	for(i=0;i<NUM_MOD_QUEUES;i++){
@@ -78,14 +74,14 @@ int add_modnet_module (char __user * identifier){
 		curr_module -> pcore_infos[i].sock_list = steal_queue_head;
 		curr_module -> pcore_infos[i].mod_lock = curr_lock;
 		curr_module -> pcore_infos[i].virt_event_wq = virt_event_wq;
-		curr_module -> pcore_infos[i].interception_on = curr_interception_atomic;
+		curr_module -> pcore_infos[i].interception_on = 
+				curr_interception_atomic;
 		//interception is on by defualt
 		atomic_set(curr_interception_atomic,1);
 		spin_lock_init(curr_lock);
 		init_waitqueue_head(virt_event_wq);
 		INIT_LIST_HEAD(steal_queue_head);
 	}
-
 
 	current->module_entry = curr_module;
 	//adding a pointer to the modules array
@@ -203,7 +199,8 @@ SYSCALL_DEFINE1(modnet_register, char __user *, indentifier){
 	return err;
 }
 
-int get_pcore_infos_array(char __user ** indentifier, int num_mods, struct per_core_module_info * pcore_info[]){
+int get_pcore_infos_array(char __user ** indentifier, 
+		int num_mods, struct per_core_module_info * pcore_info[]){
 	int i;
 
 	for( i = 0; i < num_mods; i++)
@@ -220,52 +217,67 @@ int get_pcore_infos_array(char __user ** indentifier, int num_mods, struct per_c
 	return 0;
 } EXPORT_SYMBOL(get_pcore_infos_array);
 
-SYSCALL_DEFINE2(modnet_apply, char __user **, indentifier, int, num_mods){
-
+SYSCALL_DEFINE3(modnet_apply, pid_t, pid, char __user **, indentifier, 
+		int, num_mods){
 	int i;
-
-	if(num_mods > MODNET_MAX_MODULES)
-	{
-		printk("modnet: applying more than %d modules is not legal\n",MODNET_MAX_MODULES);
+	const struct cred *cred, *tcred;
+    struct task_struct * target_process = current; 
+    kuid_t root_uid;
+    root_uid.val = 0;
+    if(pid > 0) {
+    	target_process = pid_task(find_vpid(pid), PIDTYPE_PID);
+    	cred = current_cred();
+    	tcred = __task_cred(target_process);
+    	if (!(uid_eq(cred->euid, tcred->suid) ||
+    	      uid_eq(cred->euid, tcred->uid)  ||
+    	      uid_eq(cred->uid,  tcred->suid) ||
+    	      uid_eq(cred->uid,  tcred->uid)  ||
+    	      uid_eq(cred->uid, root_uid)))
+    		return -EPERM;
+    }
+    
+	if(num_mods > MODNET_MAX_MODULES) {
+		printk("modnet: applying more than %d modules is not legal\n", 
+				MODNET_MAX_MODULES);
 		return -EINVAL;
 	}
 
-	for( i = 0; i < num_mods; i++)
-	{
-
+	for(i = 0; i < num_mods; i++) {
 		// checking user access
 		if(strnlen_user(indentifier[i],MAXIMUM_MODNAME)==0)
 			return -EINVAL;
 
-		current->pcore_infos_array[i] = find_modnet_module(indentifier[i],1);
-
+		target_process->pcore_infos_array[i] = 
+				find_modnet_module(indentifier[i],1);
+		
 		// module doesn't exist (ESRCH: No such process)
-		if(current->pcore_infos_array[i]==NULL)
+		if(target_process->pcore_infos_array[i] == NULL)
 			return -ESRCH;
 	}
 
-	current->total_static_modules = num_mods;
+	target_process->total_static_modules = num_mods;
 
 #ifdef VSOCK_DEBUG
 	// modules starting with g, will be treated specially when
 	// running in debug mode
 	if(indentifier[0]=='g')
-		current->module[0] = (struct list_head *)1;
+		target_process->module[0] = (struct list_head *)1;
 #endif
 
 	return 0;
 }
 
-int is_curr_module(){
+int is_curr_module() {
 
 	if(current->total_static_modules == -1)
 		return 1;
 
 	return 0;
 
-}EXPORT_SYMBOL(is_curr_module);
+}
+EXPORT_SYMBOL(is_curr_module);
 
-int is_curr_application(){
+int is_curr_application() {
 
 	if(current->total_static_modules > 0)
 		return 1;
@@ -274,26 +286,25 @@ int is_curr_application(){
 
 }EXPORT_SYMBOL(is_curr_application);
 
-int is_curr_module_or_app(){
+int is_curr_module_or_app() {
 
 	if(current->total_static_modules != 0)
 		return 1;
 
 	return 0;
 
-}EXPORT_SYMBOL(is_curr_module_or_app);
-
+}
+EXPORT_SYMBOL(is_curr_module_or_app);
 /////////////////////////////relocate it to some more appropriate file//////////////
 /* sharvanath */
-static int cstack_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
-{
+static int cstack_fault(struct vm_area_struct *vma, struct vm_fault *vmf) {
 	struct socket *sock = (struct socket *)(vma->vm_file->private_data);
 	struct sock *sk = sock->sk;
 
 	//fix this to allocate in terms of page and not small region, this exposes the other parts of page to application
 	if(tcp_sk(sk)->stats==NULL)
 	{
-		printk(KERN_DEBUG "here In cstack_fault handler, the stats are NULL!\n");
+		printk(KERN_DEBUG "In cstack_fault handler, the stats are NULL!\n");
 		return VM_FAULT_SIGBUS;
 	}
 
@@ -308,13 +319,13 @@ static int cstack_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	return 0;
 }
 
-static int cstack_fault1(struct vm_area_struct *vma, struct vm_fault *vmf)
-{
+static int cstack_fault1(struct vm_area_struct *vma, struct vm_fault *vmf) {
 	struct socket *sock = (struct socket *)(vma->vm_file->private_data);
 
 	if(sock->sk->stat_page==NULL)
 	{
-		printk(KERN_DEBUG "here In cstack_fault handler1 socket %lu, sock %lu, the stat_page is NULL!\n",
+		printk(KERN_DEBUG "In cstack_fault handler1 socket %lu, "
+				"sock %lu, the stat_page is NULL!\n",
 				(unsigned long)sock, (unsigned long)sock->sk);
 		return VM_FAULT_SIGBUS;
 	}
@@ -335,15 +346,15 @@ static const struct vm_operations_struct cstack_vm_ops1 = {
 		.fault      = cstack_fault1
 };
 
-int cstack_mmap(struct file *file, struct socket *sock, struct vm_area_struct *vma)
-{
+int cstack_mmap(struct file *file, struct socket *sock, 
+		struct vm_area_struct *vma) {
 	vma->vm_ops = &cstack_vm_ops;
 	return 0;
 }
 EXPORT_SYMBOL(cstack_mmap);
 
-int cstack_mmap1(struct file *file, struct socket *sock, struct vm_area_struct *vma)
-{
+int cstack_mmap1(struct file *file, struct socket *sock, 
+		struct vm_area_struct *vma) {
 	vma->vm_ops = &cstack_vm_ops1;
 	return 0;
 }

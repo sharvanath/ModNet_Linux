@@ -110,8 +110,10 @@ int create_isock_pair(struct socket ** sock1_ret, struct socket ** sock2_ret,
 
 	if(!sock_curr_sock->final_sock)
 	{
-		last_sock = kmalloc(sizeof(struct last_sock_status) + sizeof(spinlock_t), GFP_KERNEL);
-		spin_lock_init ((spinlock_t *)((void *)last_sock+sizeof(struct last_sock_status)));
+		last_sock = kmalloc(sizeof(struct last_sock_status) + 
+				sizeof(spinlock_t), GFP_KERNEL);
+		spin_lock_init ((spinlock_t *)((void *)last_sock + 
+				sizeof(struct last_sock_status)));
 		last_sock->last_sock = sock_curr_sock;
 		last_sock->closed = 0;
 		sock_curr_sock->final_sock = last_sock;
@@ -153,7 +155,8 @@ int create_isock_pair(struct socket ** sock1_ret, struct socket ** sock2_ret,
 	return err;
 }
 
-int yield_sockets(struct file *lsocket, struct file *rsocket, struct per_core_module_info * pcore_info[],
+int yield_sockets(struct file *lsocket, struct file *rsocket, 
+		struct per_core_module_info * pcore_info[],
 		int len, struct file * final_sock_file){
 
 	int i = 0, err = 0, mods = 0;
@@ -166,18 +169,20 @@ int yield_sockets(struct file *lsocket, struct file *rsocket, struct per_core_mo
 
 	last_left = lsocket;
 
-	// looping over the modules, and creating paired sockets for links between modules.
-	// mod1<-->mod2<-->mod3, i.e. 3 modules, 2 links
+	// looping over the modules, and creating paired sockets for links 
+	// between modules. mod1<-->mod2<-->mod3, i.e. 3 modules, 2 links
 	for(i = 0; i < len; i++)
 	{
-		if(!modnet_module_exists(pcore_info[i]) || !atomic_read(pcore_info[i][smp_processor_id()].interception_on))
+		if(!modnet_module_exists(pcore_info[i]) || 
+				!atomic_read(pcore_info[i][smp_processor_id()].interception_on))
 			continue;
 		else
 			mods++;
 
 		if(i<len-1)
 		{
-			err = create_isock_pair(&sock1, &sock2, &newfile1, &newfile2, final_sock_file);
+			err = create_isock_pair(&sock1, &sock2, &newfile1, &newfile2, 
+					final_sock_file);
 			if(err<0)
 			{
 				printk("modnet: Error after create_isock_pair function\n");
@@ -189,18 +194,21 @@ int yield_sockets(struct file *lsocket, struct file *rsocket, struct per_core_mo
 			newfile1 = rsocket;
 		}
 
-		curr = (struct isock_elem *) kmalloc(sizeof(struct isock_elem), GFP_KERNEL);
+		curr = (struct isock_elem *) kmalloc(sizeof(struct isock_elem), 
+				GFP_KERNEL);
 		curr->infile = last_left;
 		curr->outfile = newfile1;
 		last_left = newfile2;
 		spin_lock(pcore_info[i][smp_processor_id()].mod_lock);
 		list_add(&(curr->list), pcore_info[i][smp_processor_id()].sock_list);
 		spin_unlock(pcore_info[i][smp_processor_id()].mod_lock);
-		wake_up_interruptible_sync_poll(pcore_info[i][smp_processor_id()].virt_event_wq, POLLVNET);
+		wake_up_interruptible_sync_poll(
+				pcore_info[i][smp_processor_id()].virt_event_wq, POLLVNET);
 	}
 
 	if(mods==0){
-		printk("modnet: Error in yield_sockets, all the requested modules have exited\n");
+		printk("modnet: Error in yield_sockets, all the requested modules have "
+				"exited\n");
 		return 0;
 	}
 
@@ -208,7 +216,7 @@ int yield_sockets(struct file *lsocket, struct file *rsocket, struct per_core_mo
 }
 
 int enqueue_sock(int fd, struct file* fp) {
-
+	
 	struct socket *sock1, *sock2;
 	struct file *newfile1, *newfile2;
 	struct file * socket_file;
@@ -217,17 +225,18 @@ int enqueue_sock(int fd, struct file* fp) {
 	if(current->total_static_modules <= 0)
 		return 0;
 
-	if(!modnet_module_exists(current->pcore_infos_array[0]) ||
-			!atomic_read(current->pcore_infos_array[0][smp_processor_id()].interception_on))
+	if(!modnet_module_exists(current->pcore_infos_array[0]) || !atomic_read(
+			current->pcore_infos_array[0][smp_processor_id()].interception_on))
 	{
 		return 0;
 	}
-
+	
 	if (fp == NULL) {
 		socket_file = fget(fd);
 		put_filp(socket_file);
-	} else
+	} else {
 		socket_file = fp;
+	}
 
 	err = create_isock_pair(&sock1, &sock2, &newfile1, &newfile2, socket_file);
 
@@ -236,12 +245,14 @@ int enqueue_sock(int fd, struct file* fp) {
 
 	sock2->prev_module = current;
 	fd_install_custom(fd, newfile1);
-	return yield_sockets(newfile2, socket_file, current->pcore_infos_array, current->total_static_modules, socket_file);
+	return yield_sockets(newfile2, socket_file, current->pcore_infos_array, 
+			current->total_static_modules, socket_file);
 
 }
 EXPORT_SYMBOL(enqueue_sock);
 
-SYSCALL_DEFINE3(modnet_yield, int __user *, fds, char __user **, indentifier, int, num_mods) {
+SYSCALL_DEFINE3(modnet_yield, int __user *, fds, char __user **, indentifier, 
+		int, num_mods) {
 
 	struct file *lfile, *rfile;
 	struct file *newfile1, *newfile2;
@@ -574,10 +585,12 @@ SYSCALL_DEFINE2(modnet_map_last_sock, int, fd_in, int, fd_out) {
 	return err;
 }
 
-// we can reduce the overhead of syscall by returning this with the events itself, see if that's helpful
+// we can reduce the overhead of syscall by returning this with the events itself, 
+// see if that's helpful
 /* do error_handling, similar to the original socket.c code */
 /* sharva_mod1, the syscall for the module to get a isock */
-SYSCALL_DEFINE4(modnet_getsockets, int, module, int __user *, fd_in, int __user *, fd_out, int __user*, max_elems_ptr) {
+SYSCALL_DEFINE4(modnet_getsockets, int __user *, fd_in, int __user *, fd_out, 
+		int __user*, max_elems_ptr, long, cpu_mask) {
 
 	int fd1=0,fd2=0,err=0,i=0;
 	struct list_head * isock_list_head;
@@ -585,106 +598,101 @@ SYSCALL_DEFINE4(modnet_getsockets, int, module, int __user *, fd_in, int __user 
 	struct isock_elem * curr_sock;
 	int flags;
 	int type = SOCK_STREAM;
-	int max_elems = 0;
-
-	INIT_LIST_HEAD(&temp_list);
-
-	if(current->total_static_modules!=-1)
-	{
+	int max_elems = 0, ret = 0;
+	cpumask_t cpumask_struct = { CPU_BITS_NONE };
+	int cpu;
+	
+	//Todo(sharva): take the cpumask struct as input
+	cpumask_struct.bits[0] = cpu_mask;
+	if(get_user(max_elems, max_elems_ptr))
+			return -EFAULT;
+	
+	if(current->total_static_modules != -1) {
 		printk(KERN_DEBUG "modnet: Called get_isock from a non-module");
-		err = 0;
+		err = -EINVAL;
 		goto out;
 	}
-
-	isock_list_head = current->pcore_infos_array[0][smp_processor_id()].sock_list;
-	spin_lock(current->pcore_infos_array[0][smp_processor_id()].mod_lock);
-
-	if(list_empty(isock_list_head))
-	{
-		spin_unlock(current->pcore_infos_array[0][smp_processor_id()].mod_lock);
-		err = 0;
-		goto out;
-	}
-
-	// see if the flags is fine. what about the fd1 being negative?
-	if(get_user(max_elems,max_elems_ptr))
-		return -EFAULT;
-
-	if(module==-1)
-	{
-		err = 0;
-		goto out;
-	}
-
-	i=0;
-	while(!list_empty(isock_list_head) && i<max_elems)
-	{
-		curr_sock = list_first_entry(isock_list_head, struct isock_elem, list);
-		list_del(&(curr_sock->list));
-		list_add(&(curr_sock->list), &temp_list);
-		i++;
-	}
-
-	spin_unlock(current->pcore_infos_array[0][smp_processor_id()].mod_lock);
-
-
-	///Todo(sharva) CHECK OF THE SOCKET IS ALREADY CLOSED
-	flags = type & ~SOCK_TYPE_MASK;
-	if (flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK))
-	{
-		printk(KERN_DEBUG "Error in get_isock, flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK)");
-	}
-
-	type &= SOCK_TYPE_MASK;
-
-	if (SOCK_NONBLOCK != O_NONBLOCK && (flags & SOCK_NONBLOCK))
-		flags = (flags & ~SOCK_NONBLOCK) | O_NONBLOCK;
-
-	i = 0;
-	while(!list_empty(&temp_list) && i < max_elems){
-		curr_sock = list_first_entry(&temp_list, struct isock_elem, list);
-		fd1 = get_unused_fd_flags(flags);
-
-		if (unlikely(fd1 < 0)) {
-			err = fd1;
-			goto out_add;
+	
+	for_each_cpu(cpu, &cpumask_struct) {
+		INIT_LIST_HEAD(&temp_list);
+	
+		isock_list_head = current->pcore_infos_array[0][cpu].sock_list;
+		spin_lock(current->pcore_infos_array[0][cpu].mod_lock);
+	
+		if(list_empty(isock_list_head))
+		{
+			spin_unlock(current->pcore_infos_array[0][cpu].mod_lock);
+			err = 0;
+			goto out;
 		}
-
-		fd2 = get_unused_fd_flags(flags);
-
-		if (unlikely(fd2 < 0)) {
-			put_unused_fd(fd1);
-			err = fd2;
-			goto out_add;
+	
+		i = 0;
+		while(!list_empty(isock_list_head) && ret + i < max_elems)
+		{
+			curr_sock = list_first_entry(isock_list_head, 
+					struct isock_elem, list);
+			list_del(&(curr_sock->list));
+			list_add(&(curr_sock->list), &temp_list);
+			i++;
 		}
+	
+		spin_unlock(current->pcore_infos_array[0][cpu].mod_lock);
+	
+		///Todo(sharva) CHECK IF THE SOCKET IS ALREADY CLOSED
+		flags = type & ~SOCK_TYPE_MASK;
+		if (flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK))
+		{
+			printk(KERN_DEBUG "Error in modnet_getsockets, "
+					"flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK)");
+		}
+	
+		type &= SOCK_TYPE_MASK;
+	
+		if (SOCK_NONBLOCK != O_NONBLOCK && (flags & SOCK_NONBLOCK))
+			flags = (flags & ~SOCK_NONBLOCK) | O_NONBLOCK;
 
-		fd_install(fd1, curr_sock->infile);
-		fd_install(fd2, curr_sock->outfile);
-
-		put_user(fd1,fd_in+i);
-		put_user(fd2,fd_out+i);
-
-		list_del(&(curr_sock->list));
-		kfree(curr_sock);
-		i++;
+		while(!list_empty(&temp_list) && ret < max_elems) {
+			curr_sock = list_first_entry(&temp_list, struct isock_elem, list);
+			fd1 = get_unused_fd_flags(flags);
+	
+			if (unlikely(fd1 < 0)) {
+				err = fd1;
+				goto out_add;
+			}
+	
+			fd2 = get_unused_fd_flags(flags);
+	
+			if (unlikely(fd2 < 0)) {
+				put_unused_fd(fd1);
+				err = fd2;
+				goto out_add;
+			}
+	
+			fd_install(fd1, curr_sock->infile);
+			fd_install(fd2, curr_sock->outfile);
+	
+			put_user(fd1, fd_in + ret);
+			put_user(fd2, fd_out + ret);
+	
+			list_del(&(curr_sock->list));
+			kfree(curr_sock);
+			ret++;
+		}
+	
+		if(ret == max_elems)
+			printk("modnet: modnet_getsockets user array overshoot\n");
 	}
-
-	if(i==max_elems)
-		printk("Here we got max_elem entries and so some of them were lost based on this %d\n",
-				list_empty(&temp_list));
-
-	return i;
-
+	
 	out_add:
-	printk(KERN_DEBUG "modnet: File limit overshoot in get_isock\n");
-	err = 0;
-
+	// Todo(sharva) put back the stolen sockets from the temp list.
+	ret = (ret > 0 ?  ret : err);
+	
 	out:
-	return err;
-
+	return ret;
 }
 
-SYSCALL_DEFINE4(modnet_isock_yank, int, fd, void __user *, buff, size_t, len, size_t, length)
+SYSCALL_DEFINE4(modnet_isock_yank, int, fd, void __user *, buff, 
+		size_t, len, size_t, length)
 {
 
 	struct socket *sock;
